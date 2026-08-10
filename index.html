@@ -62,42 +62,6 @@ const DollarBadge = ({ size = 34 }) => (
   </div>
 );
 
-const GUIDES = [
-  {
-    id: "study", tag: "TRAINING", title: "Sales Study Guide",
-    blurb: "The Muscle Concrete sales process — from first walk-through to signed contract.",
-    sections: [
-      ["The MC Sales Process", "1. Walk the site with the customer and listen first. 2. Qualify: budget range, timeline, and what's driving the project. 3. Measure and photograph everything. 4. Present one clear recommendation with options, not a menu. 5. Quote on the spot when possible — same-day quotes close at a much higher rate. 6. Follow up within 48 hours. Most lost jobs are lost to silence, not to competitors."],
-      ["Objection Handling", "Price: break it down to cost per square foot and talk longevity — concrete done right is a 30-year decision. 'I got a cheaper quote': ask what's in it. Base prep, rebar/mesh, thickness, PSI mix, and sealing are where cheap bids cut corners. 'I need to think about it': ask what specifically — it surfaces the real objection so you can address it."],
-      ["Know Your Work", "Be able to explain in plain language: proper base prep and why it prevents cracking, control joints and what they do, cure times (when they can walk on it, drive on it), and the difference between broom finish, smooth trowel, and stamped/decorative. If you don't know an answer, say 'Let me confirm that with the crew' — never guess on structural questions."],
-    ],
-  },
-  {
-    id: "pricing", tag: "REFERENCE", title: "Pricing & Discount Rules",
-    blurb: "Quoting rules, discount authority limits, and what has to be in every written quote.",
-    sections: [
-      ["Discount Authority", "Reps may discount up to 5% without approval. 5–10% requires manager sign-off before the customer sees the number. Anything beyond 10% goes to management review — submit it through this hub with notes explaining the situation."],
-      ["Quoting Rules", "Every quote is written, itemized, and has an expiration date (7 days standard). Quotes list square footage, thickness, mix/PSI, base prep, reinforcement, finish type, and whether sealing and haul-off are included. Never quote from memory — pull the current price sheet. Seasonal promotions cannot be stacked unless the promo terms say otherwise."],
-    ],
-  },
-  {
-    id: "onboarding", tag: "NEW HIRES", title: "New Rep Onboarding",
-    blurb: "First 30 days: what to learn, who to ride with, and when you're cleared to quote solo.",
-    sections: [
-      ["Week 1–2", "Ride along with a senior rep on every estimate. Walk at least two active pours with the crew — you can't sell what you haven't seen poured. Complete the study guide and pass the knowledge check with your manager. Create your rep account in this hub and learn the submission process."],
-      ["Week 3–4", "Lead the customer conversation with a senior rep observing. Submit your first sales for review here — expect notes back from management on every one. Solo quoting starts once your manager signs off."],
-    ],
-  },
-  {
-    id: "policy", tag: "POLICY", title: "Submission & Review Policy",
-    blurb: "How sales review works: what to submit, what management checks, and turnaround.",
-    sections: [
-      ["What to Submit", "Every signed contract goes through this hub the same day, with the signed PDF attached. Include customer name, job type, contract amount, and any discount applied. Missing info or a missing contract PDF is the #1 reason for kicked-back submissions."],
-      ["What Management Reviews", "The signed contract PDF, pricing accuracy against the current sheet, discount authority, and scope clarity (no vague line items). Approved sales count toward your numbers immediately. Rejected sales come back with a note — fix and resubmit."],
-    ],
-  },
-];
-
 const JOB_TYPES = ["Building", "Concrete", "Building & Concrete", "Other"];
 
 const fmtMoney = (n) => {
@@ -136,6 +100,12 @@ function App() {
 
   // Announcement form
   const [annForm, setAnnForm] = useState({ title: "", body: "" });
+
+  // Resources (DB-driven, manager-editable)
+  const [resources, setResources] = useState([]);
+  const [resEditing, setResEditing] = useState(null);
+  const [resSaving, setResSaving] = useState(false);
+  const [resImgUrls, setResImgUrls] = useState({});
 
   // Filters
   const [repFilter, setRepFilter] = useState("all");
@@ -177,9 +147,14 @@ function App() {
     if (!error) setReps(data || []);
   }, []);
 
+  const fetchResources = useCallback(async () => {
+    const { data, error } = await db.from("resources").select("*").order("sort_order").order("created_at");
+    if (!error) setResources(data || []);
+  }, []);
+
   useEffect(() => {
     if (!session) return;
-    fetchProfile(); fetchSubs(); fetchAnns(); fetchReps();
+    fetchProfile(); fetchSubs(); fetchAnns(); fetchReps(); fetchResources();
     let ch = null;
     if (typeof db.channel === "function") {
       try {
@@ -191,7 +166,25 @@ function App() {
       } catch (e) { console.warn("Live updates unavailable:", e); }
     }
     return () => { if (ch) { try { db.removeChannel(ch); } catch (e) {} } };
-  }, [session, fetchProfile, fetchSubs, fetchAnns, fetchReps]);
+  }, [session, fetchProfile, fetchSubs, fetchAnns, fetchReps, fetchResources]);
+
+  // signed URLs for images inside an open resource
+  useEffect(() => {
+    const imgs = openGuide && openGuide.files ? openGuide.files.filter((f) => (f.type || "").startsWith("image/")) : [];
+    if (!imgs.length) return;
+    let alive = true;
+    (async () => {
+      const entries = {};
+      for (const f of imgs) {
+        try {
+          const { data } = await db.storage.from("resources").createSignedUrl(f.path, 3600);
+          if (data) entries[f.path] = data.signedUrl;
+        } catch (e) {}
+      }
+      if (alive) setResImgUrls((p) => ({ ...p, ...entries }));
+    })();
+    return () => { alive = false; };
+  }, [openGuide]);
 
   const signIn = async () => {
     setAuthBusy(true);
@@ -322,6 +315,61 @@ function App() {
     if (error) { flash("Delete failed: " + error.message); return; }
     flash("Submission permanently deleted");
     fetchSubs();
+  };
+
+  const openResourceFile = async (p) => {
+    const { data, error } = await db.storage.from("resources").createSignedUrl(p, 300);
+    if (error || !data) { flash("Couldn't load that file"); return; }
+    window.open(data.signedUrl, "_blank");
+  };
+
+  const startEditRes = (r) => setResEditing(r
+    ? { id: r.id, tag: r.tag || "RESOURCE", title: r.title || "", blurb: r.blurb || "", body: r.body || "", links: (r.links || []).map((l) => ({ ...l })), files: (r.files || []).map((f) => ({ ...f })), newFiles: [], removedFiles: [] }
+    : { id: null, tag: "RESOURCE", title: "", blurb: "", body: "", links: [], files: [], newFiles: [], removedFiles: [] });
+
+  const onPickResFiles = (e) => {
+    const files = Array.from(e.target.files || []);
+    const good = [];
+    for (const f of files) {
+      const ok = f.type === "application/pdf" || f.type.startsWith("image/");
+      if (!ok) { flash(`${f.name}: only PDFs and images`); continue; }
+      if (f.size > MAX_PDF_BYTES) { flash(`${f.name} too large (max 10MB)`); continue; }
+      good.push(f);
+    }
+    setResEditing((p) => ({ ...p, newFiles: [...p.newFiles, ...good] }));
+    e.target.value = "";
+  };
+
+  const saveResource = async () => {
+    const r = resEditing;
+    if (!r.title.trim()) { flash("Resource needs a title"); return; }
+    setResSaving(true);
+    const files = [...r.files];
+    for (const f of r.newFiles) {
+      const p = `library/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${f.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const { error: upErr } = await db.storage.from("resources").upload(p, f);
+      if (upErr) { setResSaving(false); flash(`Upload failed for ${f.name}: ` + upErr.message); return; }
+      files.push({ path: p, name: f.name, type: f.type });
+    }
+    if (r.removedFiles.length) { try { await db.storage.from("resources").remove(r.removedFiles); } catch (e) {} }
+    const row = { tag: (r.tag || "RESOURCE").trim(), title: r.title.trim(), blurb: (r.blurb || "").trim(), body: r.body, links: r.links.filter((l) => l.url && l.url.trim()), files };
+    const q = r.id ? db.from("resources").update(row).eq("id", r.id) : db.from("resources").insert(row);
+    const { error } = await q;
+    setResSaving(false);
+    if (error) { flash("Save failed: " + error.message); return; }
+    flash(r.id ? "Resource updated — live for the whole team" : "Resource added — live for the whole team");
+    setResEditing(null);
+    fetchResources();
+  };
+
+  const deleteResource = async (r) => {
+    if (!window.confirm(`Delete "${r.title}" for the whole team? This cannot be undone.`)) return;
+    const paths = (r.files || []).map((f) => f.path);
+    if (paths.length) { try { await db.storage.from("resources").remove(paths); } catch (e) {} }
+    const { error } = await db.from("resources").delete().eq("id", r.id);
+    if (error) { flash("Delete failed: " + error.message); return; }
+    flash("Resource deleted");
+    fetchResources();
   };
 
   /* ---------- announcements ---------- */
@@ -638,16 +686,35 @@ function App() {
 
             {/* GUIDES */}
             {tab === "guides" && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
-                {GUIDES.map((g) => (
-                  <div key={g.id} onClick={() => setOpenGuide(g)}
-                    style={{ ...card, cursor: "pointer", borderLeft: `4px solid ${C.gold}` }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.4, color: C.goldDark }}>★ {g.tag}</div>
-                    <div style={{ ...heading, fontSize: 17, margin: "8px 0 6px" }}>{g.title}</div>
-                    <div style={{ fontSize: 14, color: C.sub, lineHeight: 1.5 }}>{g.blurb}</div>
-                    <div style={{ marginTop: 12, fontSize: 13, fontWeight: 800, color: C.goldDark, textTransform: "uppercase", letterSpacing: 0.6 }}>Open →</div>
+              <div style={{ display: "grid", gap: 16 }}>
+                {role === "manager" && (
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <button style={btnGold} onClick={() => startEditRes(null)}>+ New Resource</button>
                   </div>
-                ))}
+                )}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+                  {resources.length === 0 && (
+                    <div style={{ ...card, color: C.sub }}>
+                      No resources yet.{role === "manager" ? " Tap + New Resource to add the first study guide." : " Check back soon."}
+                    </div>
+                  )}
+                  {resources.map((g) => (
+                    <div key={g.id} style={{ ...card, borderLeft: `4px solid ${C.gold}`, display: "flex", flexDirection: "column" }}>
+                      <div onClick={() => setOpenGuide(g)} style={{ cursor: "pointer", flex: 1 }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.4, color: C.goldDark }}>★ {g.tag}</div>
+                        <div style={{ ...heading, fontSize: 17, margin: "8px 0 6px" }}>{g.title}</div>
+                        <div style={{ fontSize: 14, color: C.sub, lineHeight: 1.5 }}>{g.blurb}</div>
+                        <div style={{ marginTop: 12, fontSize: 13, fontWeight: 800, color: C.goldDark, textTransform: "uppercase", letterSpacing: 0.6 }}>Open →</div>
+                      </div>
+                      {role === "manager" && (
+                        <div style={{ display: "flex", gap: 8, marginTop: 12, borderTop: `1px solid ${C.line}`, paddingTop: 10 }}>
+                          <button style={smallBtn(C.goldDark)} onClick={() => startEditRes(g)}>✎ Edit</button>
+                          <button style={smallBtn(C.sub)} onClick={() => deleteResource(g)}>🗑 Delete</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -912,12 +979,95 @@ function App() {
                 <button onClick={() => setOpenGuide(null)}
                   style={{ border: "none", background: "#EDEDEA", borderRadius: 6, width: 34, height: 34, cursor: "pointer", fontSize: 16, color: C.ink }}>✕</button>
               </div>
-              {openGuide.sections.map(([h, body], i) => (
-                <div key={i} style={{ marginTop: 22 }}>
-                  <div style={{ ...heading, fontSize: 15, marginBottom: 6, paddingBottom: 6, borderBottom: `2px solid ${C.gold}` }}>{h}</div>
-                  <div style={{ fontSize: 15, lineHeight: 1.65, color: "#333639" }}>{body}</div>
-                </div>
+              {(openGuide.body || "").split(/\n\s*\n/).filter(Boolean).map((para, i) => (
+                para.trim().startsWith("# ") ? (
+                  <div key={i} style={{ ...heading, fontSize: 15, marginTop: 22, marginBottom: 6, paddingBottom: 6, borderBottom: `2px solid ${C.gold}` }}>{para.trim().slice(2)}</div>
+                ) : (
+                  <div key={i} style={{ fontSize: 15, lineHeight: 1.65, color: "#333639", marginTop: 12, whiteSpace: "pre-wrap" }}>{para}</div>
+                )
               ))}
+              {(openGuide.links || []).length > 0 && (
+                <div style={{ marginTop: 22 }}>
+                  <div style={{ ...heading, fontSize: 15, marginBottom: 8, paddingBottom: 6, borderBottom: `2px solid ${C.gold}` }}>Links</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {(openGuide.links || []).map((l, i) => (
+                      <a key={i} href={l.url} target="_blank" rel="noreferrer" style={{ color: C.goldDark, fontWeight: 800, fontSize: 14, textDecoration: "none" }}>
+                        🔗 {l.label || l.url}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(openGuide.files || []).length > 0 && (
+                <div style={{ marginTop: 22 }}>
+                  <div style={{ ...heading, fontSize: 15, marginBottom: 8, paddingBottom: 6, borderBottom: `2px solid ${C.gold}` }}>Attachments</div>
+                  {(openGuide.files || []).map((f, i) =>
+                    (f.type || "").startsWith("image/") ? (
+                      resImgUrls[f.path]
+                        ? <img key={i} src={resImgUrls[f.path]} alt={f.name} style={{ maxWidth: "100%", borderRadius: 8, margin: "8px 0", border: `1px solid ${C.line}` }} />
+                        : <div key={i} style={{ color: C.sub, fontSize: 13, margin: "8px 0" }}>Loading {f.name}…</div>
+                    ) : (
+                      <button key={i} style={{ ...linkBtn, marginRight: 8, marginTop: 6 }} onClick={() => openResourceFile(f.path)}>📄 {f.name}</button>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RESOURCE EDITOR (manager) */}
+      {resEditing && (
+        <div onClick={() => !resSaving && setResEditing(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(10,10,10,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 55 }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ background: "#fff", borderRadius: 12, maxWidth: 640, width: "100%", maxHeight: "88vh", overflowY: "auto", borderTop: `5px solid ${C.gold}` }}>
+            <div style={{ padding: 24, display: "grid", gap: 14 }}>
+              <div style={{ ...heading, fontSize: 18 }}>{resEditing.id ? "Edit Resource" : "New Resource"}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 14 }}>
+                <div><span style={label}>Tag</span><input {...input({ value: resEditing.tag, onChange: (e) => setResEditing({ ...resEditing, tag: e.target.value.toUpperCase() }), placeholder: "TRAINING" })} /></div>
+                <div><span style={label}>Title</span><input {...input({ value: resEditing.title, onChange: (e) => setResEditing({ ...resEditing, title: e.target.value }) })} /></div>
+              </div>
+              <div><span style={label}>Short description (shows on the card)</span><input {...input({ value: resEditing.blurb, onChange: (e) => setResEditing({ ...resEditing, blurb: e.target.value }) })} /></div>
+              <div>
+                <span style={label}>Content</span>
+                <textarea {...input({ value: resEditing.body, onChange: (e) => setResEditing({ ...resEditing, body: e.target.value }), rows: 10, placeholder: "Write the guide here. Start a line with # to make a gold section heading. Leave a blank line between paragraphs." })} />
+              </div>
+              <div>
+                <span style={label}>Links</span>
+                {resEditing.links.map((l, i) => (
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr auto", gap: 8, marginBottom: 8 }}>
+                    <input {...input({ value: l.label || "", onChange: (e) => { const links = [...resEditing.links]; links[i] = { ...links[i], label: e.target.value }; setResEditing({ ...resEditing, links }); }, placeholder: "Label" })} />
+                    <input {...input({ value: l.url || "", onChange: (e) => { const links = [...resEditing.links]; links[i] = { ...links[i], url: e.target.value }; setResEditing({ ...resEditing, links }); }, placeholder: "https://…" })} />
+                    <button style={smallBtn(C.red)} onClick={() => setResEditing({ ...resEditing, links: resEditing.links.filter((_, j) => j !== i) })}>✕</button>
+                  </div>
+                ))}
+                <button style={smallBtn(C.goldDark)} onClick={() => setResEditing({ ...resEditing, links: [...resEditing.links, { label: "", url: "" }] })}>+ Add link</button>
+              </div>
+              <div>
+                <span style={label}>Attachments (PDFs & images, max 10MB each)</span>
+                {resEditing.files.map((f, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 14 }}>
+                    <span>📄 {f.name}</span>
+                    <button style={smallBtn(C.red)} onClick={() => setResEditing({ ...resEditing, files: resEditing.files.filter((_, j) => j !== i), removedFiles: [...resEditing.removedFiles, f.path] })}>Remove</button>
+                  </div>
+                ))}
+                {resEditing.newFiles.map((f, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 14, color: C.green, fontWeight: 700 }}>
+                    <span>📄 {f.name} (new)</span>
+                    <button style={smallBtn(C.red)} onClick={() => setResEditing({ ...resEditing, newFiles: resEditing.newFiles.filter((_, j) => j !== i) })}>Remove</button>
+                  </div>
+                ))}
+                <label style={{ display: "inline-block", marginTop: 6, cursor: "pointer" }}>
+                  <span style={{ ...smallBtn(C.goldDark), display: "inline-block" }}>+ Add files</span>
+                  <input type="file" accept="application/pdf,image/*" multiple onChange={onPickResFiles} style={{ display: "none" }} />
+                </label>
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button style={btnGray} disabled={resSaving} onClick={() => setResEditing(null)}>Cancel</button>
+                <button style={{ ...btnGold, opacity: resSaving ? 0.6 : 1 }} disabled={resSaving} onClick={saveResource}>{resSaving ? "Saving…" : "Save Resource"}</button>
+              </div>
             </div>
           </div>
         </div>
