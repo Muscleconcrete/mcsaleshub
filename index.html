@@ -73,6 +73,7 @@ const fmtCents = (n) => {
   return isNaN(v) ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 const fmtDate = (iso) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const fmtDay = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—");
 
 function App() {
   const [session, setSession] = useState(null);
@@ -94,7 +95,7 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false);
 
   // Sale form
-  const [form, setForm] = useState({ customer: "", product: "", notes: "" });
+  const [form, setForm] = useState({ customer: "", product: "", deposit: "", notes: "" });
   const [pdfFiles, setPdfFiles] = useState([]); // File objects
   const [submitting, setSubmitting] = useState(false);
 
@@ -224,8 +225,8 @@ function App() {
   };
 
   const submitSale = async () => {
-    if (!form.customer.trim() || !form.product.trim()) {
-      flash("Fill in customer and job type."); return;
+    if (!form.customer.trim() || !form.product.trim() || !form.deposit) {
+      flash("Fill in customer, job type, and the deposit date."); return;
     }
     if (pdfFiles.length === 0) { flash("Attach at least one signed contract PDF."); return; }
     setSubmitting(true);
@@ -240,6 +241,7 @@ function App() {
       rep_id: session.user.id,
       customer: form.customer.trim(),
       product: form.product,
+      deposit_paid_on: form.deposit,
       notes: form.notes.trim() || null,
       contracts,
       contract_path: contracts[0] ? contracts[0].path : null,
@@ -249,7 +251,7 @@ function App() {
     if (error) { flash("Submit failed: " + error.message); return; }
     flash("Sale submitted for review");
     fetchSubs();
-    setForm({ customer: "", product: "", notes: "" });
+    setForm({ customer: "", product: "", deposit: "", notes: "" });
     setPdfFiles([]);
     setTab("mysales");
   };
@@ -738,6 +740,10 @@ function App() {
                     </select>
                   </div>
                   <div>
+                    <span style={label}>Sale / deposit paid date</span>
+                    <input {...input({ type: "date", value: form.deposit, onChange: (e) => setForm({ ...form, deposit: e.target.value }) })} />
+                  </div>
+                  <div>
                     <span style={label}>Signed contracts (PDF, max 10MB each)</span>
                     <div style={{ border: `2px dashed ${pdfFiles.length ? C.green : C.line}`, borderRadius: 8, padding: 16, background: pdfFiles.length ? C.greenBg : "#FAFAF8" }}>
                       {pdfFiles.map((f, i) => (
@@ -804,7 +810,7 @@ function App() {
                       {statusPill(s.status)}
                     </div>
                     <div style={{ fontSize: 14, color: C.sub, margin: "4px 0 8px" }}>
-                      Customer: {s.customer} · {fmtDate(s.created_at)}{s.discount ? ` · ${s.discount}% discount` : ""}
+                      Customer: {s.customer} · Submitted {fmtDate(s.created_at)}{s.deposit_paid_on ? ` · Deposit paid ${fmtDay(s.deposit_paid_on)}` : ""}{s.discount ? ` · ${s.discount}% discount` : ""}
                     </div>
                     {contractChip(s)}
                     {s.status === "approved" && s.commission != null && (
@@ -855,7 +861,7 @@ function App() {
                   <div key={s.id} style={{ ...card, borderLeft: `4px solid ${C.gold}` }}>
                     <div style={{ fontWeight: 800, fontSize: 16 }}>{s.product} — {fmtMoney(s.amount)}</div>
                     <div style={{ fontSize: 14, color: C.sub, margin: "4px 0 8px" }}>
-                      Rep: {repName(s.rep_id)} · Customer: {s.customer} · {fmtDate(s.created_at)}{s.discount ? ` · ${s.discount}% discount` : ""}
+                      Rep: {repName(s.rep_id)} · Customer: {s.customer} · Submitted {fmtDate(s.created_at)}{s.deposit_paid_on ? ` · Deposit paid ${fmtDay(s.deposit_paid_on)}` : ""}{s.discount ? ` · ${s.discount}% discount` : ""}
                     </div>
                     {contractChip(s)}
                     {s.notes && <div style={{ fontSize: 14, marginTop: 8 }}>“{s.notes}”</div>}
@@ -925,7 +931,7 @@ function App() {
                         <div style={{ fontSize: 14, lineHeight: 1.6 }}>
                           <strong>{s.customer}</strong> · {s.product} · {fmtMoney(s.amount)}
                           <div style={{ fontSize: 13, color: C.sub }}>
-                            Rep: {repName(s.rep_id)} · Sold {fmtDate(s.created_at)}{s.status_changed_at ? ` · Marked ${fmtDate(s.status_changed_at)}` : ""}
+                            Rep: {repName(s.rep_id)} · Sold {fmtDate(s.created_at)}{s.deposit_paid_on ? ` · Deposit paid ${fmtDay(s.deposit_paid_on)}` : ""}{s.status_changed_at ? ` · Marked ${fmtDate(s.status_changed_at)}` : ""}
                             {contractsOf(s).map((f, i) => (
                               <button key={i} style={{ ...linkBtn, padding: "2px 9px", marginLeft: 8, fontSize: 12 }} onClick={() => openContractFile(f.path)}>
                                 📄 {contractsOf(s).length > 1 ? `PDF ${i + 1}` : "Contract"}
