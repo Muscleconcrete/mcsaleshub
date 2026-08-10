@@ -104,6 +104,10 @@ const fmtMoney = (n) => {
   const v = parseFloat(n);
   return isNaN(v) ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 };
+const fmtCents = (n) => {
+  const v = parseFloat(n);
+  return isNaN(v) ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 const fmtDate = (iso) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 function App() {
@@ -307,6 +311,16 @@ function App() {
       : newStatus === "approved" ? "✓ Dispute won — sale is back on totals"
       : "Sale removed from totals permanently"
     );
+    fetchSubs();
+  };
+
+  const deleteSubmission = async (s) => {
+    if (!window.confirm(`Permanently DELETE this submission for ${s.customer}? The record and its PDFs are erased for good — it will NOT appear in any history or record. This cannot be undone.`)) return;
+    const files = contractsOf(s).map((f) => f.path).filter(Boolean);
+    if (files.length) { try { await db.storage.from("contracts").remove(files); } catch (e) {} }
+    const { error } = await db.from("submissions").delete().eq("id", s.id);
+    if (error) { flash("Delete failed: " + error.message); return; }
+    flash("Submission permanently deleted");
     fetchSubs();
   };
 
@@ -705,7 +719,7 @@ function App() {
                   </div>
                   <div style={{ ...card, borderTop: `4px solid ${C.gold}`, textAlign: "center" }}>
                     <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase", color: C.sub }}>Commission Earned</div>
-                    <div style={{ ...heading, fontSize: 24, color: C.goldDark, marginTop: 4 }}>{fmtMoney(myCommissionTotal)}</div>
+                    <div style={{ ...heading, fontSize: 24, color: C.goldDark, marginTop: 4 }}>{fmtCents(myCommissionTotal)}</div>
                     <div style={{ fontSize: 12.5, color: C.sub, marginTop: 2 }}>posted by management</div>
                   </div>
                   <div style={{ ...card, borderTop: `4px solid ${C.charcoal}`, textAlign: "center" }}>
@@ -728,7 +742,7 @@ function App() {
                     {contractChip(s)}
                     {s.status === "approved" && s.commission != null && (
                       <div style={{ marginTop: 8, display: "inline-block", background: C.greenBg, color: C.green, padding: "5px 12px", borderRadius: 6, fontSize: 14, fontWeight: 800, marginLeft: 8 }}>
-                        Commission: {fmtMoney(s.commission)}
+                        Commission: {fmtCents(s.commission)}
                       </div>
                     )}
                     {s.notes && <div style={{ fontSize: 14, marginTop: 8 }}>{s.notes}</div>}
@@ -757,7 +771,7 @@ function App() {
                   </div>
                   <div style={{ display: "flex", gap: 18, fontSize: 14, flexWrap: "wrap" }}>
                     <span><strong style={{ color: C.green }}>{fmtMoney(visApprovedTotal)}</strong> <span style={{ color: C.sub }}>approved</span></span>
-                    <span><strong style={{ color: C.goldDark }}>{fmtMoney(visCommissionTotal)}</strong> <span style={{ color: C.sub }}>commission</span></span>
+                    <span><strong style={{ color: C.goldDark }}>{fmtCents(visCommissionTotal)}</strong> <span style={{ color: C.sub }}>commission</span></span>
                     <span><strong>{visiblePending.length}</strong> <span style={{ color: C.sub }}>pending</span></span>
                     {visDisputed.length > 0 && (
                       <span><strong style={{ color: "#A05A00" }}>{fmtMoney(sum(visDisputed, "amount"))}</strong> <span style={{ color: C.sub }}>in dispute</span></span>
@@ -781,6 +795,7 @@ function App() {
                     <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
                       <button style={{ ...btnGold, background: C.green, color: "#fff" }} onClick={() => reviewSale(s, "approved")}>✓ Confirm</button>
                       <button style={{ ...btnGray, color: C.red }} onClick={() => reviewSale(s, "rejected")}>✗ Send Back with Notes</button>
+                      <button style={{ ...btnGray, color: C.sub }} onClick={() => deleteSubmission(s)} title="Permanently delete this submission">🗑 Delete</button>
                     </div>
                   </div>
                 ))}
@@ -795,7 +810,7 @@ function App() {
                           {s.status === "approved" && (
                             s.commission != null ? (
                               <span style={{ marginLeft: 10, color: C.goldDark, fontWeight: 800 }}>
-                                Comm: {fmtMoney(s.commission)}
+                                Comm: {fmtCents(s.commission)}
                                 <button style={{ border: "none", background: "transparent", color: C.sub, cursor: "pointer", fontSize: 12, fontWeight: 700, marginLeft: 4, fontFamily: BODY, textDecoration: "underline" }}
                                   onClick={() => setCommission(s.id)}>edit</button>
                               </span>
@@ -824,6 +839,7 @@ function App() {
                               <button style={smallBtn(C.red)} onClick={() => markStatus(s.id, "refunded")}>✗ Dispute lost</button>
                             </>
                           )}
+                          <button style={smallBtn(C.sub)} onClick={() => deleteSubmission(s)} title="Permanently delete this submission">🗑</button>
                           {statusPill(s.status)}
                         </div>
                       </div>
