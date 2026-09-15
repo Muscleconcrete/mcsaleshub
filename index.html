@@ -297,6 +297,17 @@ function App() {
     fetchSubs();
   };
 
+  const setAmount = async (id) => {
+    const a = prompt("Project total for this sale ($):");
+    if (a === null) return;
+    const v = parseFloat(a);
+    if (isNaN(v)) { flash("Enter a dollar amount"); return; }
+    const { error } = await db.from("submissions").update({ amount: v }).eq("id", id);
+    if (error) { flash("Update failed: " + error.message); return; }
+    flash("Project total updated");
+    fetchSubs();
+  };
+
   const markStatus = async (id, newStatus) => {
     if (newStatus === "refunded" && !window.confirm("Remove this sale from totals permanently? (refund or lost dispute)")) return;
     const { error } = await db.from("submissions").update({ status: newStatus, status_changed_at: new Date().toISOString() }).eq("id", id);
@@ -880,6 +891,8 @@ function App() {
                       <div key={s.id} style={{ borderTop: `1px solid ${C.line}`, padding: "12px 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                         <div style={{ fontSize: 14 }}>
                           <strong>{repName(s.rep_id)}</strong> · {s.customer} · {s.product} · {fmtMoney(s.amount)}
+                          <button style={{ border: "none", background: "transparent", color: C.sub, cursor: "pointer", fontSize: 12, fontWeight: 700, marginLeft: 4, fontFamily: BODY, textDecoration: "underline" }}
+                            onClick={() => setAmount(s.id)}>edit</button>
                           {s.status === "approved" && (
                             s.commission != null ? (
                               <span style={{ marginLeft: 10, color: C.goldDark, fontWeight: 800 }}>
